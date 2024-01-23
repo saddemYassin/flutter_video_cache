@@ -69,7 +69,7 @@ class DownloadTask {
 
 
   /// The task status
-  final DownloaderTaskStatus status;
+  DownloaderTaskStatus status;
 
 
   /// The date of creation time
@@ -86,6 +86,10 @@ class DownloadTask {
     required this.createdAt
   });
 
+  /// Updates task status
+  void updateStatus(DownloaderTaskStatus status) {
+    this.status = status;
+  }
 
   @override
   String toString() {

@@ -13,6 +13,7 @@ dependencies:
   plugin_platform_interface: ^2.0.2
   path_provider: ^2.1.2
   flutter_media_metadata: ^1.0.0
+  flutter_downloader: ^1.11.6
 
 
 dev_dependencies:

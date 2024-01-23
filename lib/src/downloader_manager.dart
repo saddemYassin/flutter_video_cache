@@ -1,4 +1,12 @@
+import 'dart:io';
+import 'dart:isolate';
+import 'dart:ui';
+
+import 'package:flutter_downloader/flutter_downloader.dart' as external_downloader;
+import 'package:flutter_video_cache/flutter_video_cache.dart';
 import 'package:flutter_video_cache/src/models/downloader_task.dart';
+import 'package:flutter_video_cache/src/models/exceptions/download_exception.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// A singleton class
 
@@ -32,7 +40,9 @@ class DownloadManager {
   /// The list of downloaded tasks in the downloader package local database on init
   final List<DownloadTask> _inCacheDownloadedTasks = <DownloadTask>[];
 
+  late Directory _saveDirectory;
 
+  final ReceivePort _port = ReceivePort();
 
 
   DownloadManager._internal();
@@ -41,61 +51,172 @@ class DownloadManager {
     return _instance;
   }
 
+  /// Asynchronously initializes the downloader and sets up necessary configurations.
+  ///
+  /// This method performs the following tasks:
+  ///   1. Retrieves the persistent data path and sets it to [_saveDirectory].
+  ///   2. Initializes the downloader package from external_downloader.
+  ///   3. Loads all tasks from the downloader package and saves them in [_inCacheDownloadedTasks].
+  ///   4. Registers the download callback and sets up a listener on [_port] for task updates.
+  ///   5. Registers the port with IsolateNameServer.
+  ///
+  /// Note: This method assumes the existence of external_downloader and related classes.
+  ///
+  /// Throws: May throw exceptions if there are issues during initialization.
   Future<void> init() async {
-    // TODO init persistent data path
-    // TODO init the downloader package
-    // TODO Load all tasks from the downloader package and save them in the _inCacheDownloadedTasks
-    // TODO delete every expired file
+    // Retrieve the persistent data path and set it to [_saveDirectory].
+    _saveDirectory = await getApplicationDocumentsDirectory();
+
+    // Initialize the downloader package from external_downloader.
+    external_downloader.FlutterDownloader.initialize(debug: false, ignoreSsl: true);
+
+    // Load all tasks from the downloader package and save them in [_inCacheDownloadedTasks].
+    _inCacheDownloadedTasks.addAll(
+      (await external_downloader.FlutterDownloader.loadTasks())
+          ?.map((e) => _mapDownloadTaskToDownloaderTask(e))
+          .toList() ?? [],
+    );
+
+    // TODO: Implement logic to delete every expired file.
+
+    // Register the port with IsolateNameServer and set up a listener for task updates.
+    IsolateNameServer.registerPortWithName(_port.sendPort, 'downloader_send_port');
+    _port.listen((dynamic data) {
+      String id = data[0];
+      DownloaderTaskStatus status = DownloaderTaskStatus.fromInt(data[1]);
+      int progress = data[2];
+
+      if (_accessMap[id] != null) {
+        // Invoke progress callbacks if available.
+        if (_onProgressCallbacks[_accessMap[id]] != null) {
+          _onProgressCallbacks[_accessMap[id]]!(progress);
+        }
+
+        // Update task status and manage downloading tasks.
+        if (_tasks[_accessMap[id]] != null) {
+          _tasks[_accessMap[id]]!.updateStatus(status);
+          if (_tasks[_accessMap[id]]!.status == DownloaderTaskStatus.running) {
+            _downloadingTasks[_accessMap[id]!] = _tasks[_accessMap[id]]!;
+          } else {
+            _downloadingTasks.remove(_accessMap[id]);
+          }
+        }
+      }
+    });
+
+    // Register the download callback.
+    external_downloader.FlutterDownloader.registerCallback(downloadCallback);
   }
 
-  /// TODO : Returns the path of the downloaded file
+
+  /// Returns the path of the downloaded file
   /// [key] presents an identification to the file download process and can be used to pause, resume or cancel the download
   /// [DownloadManager] should be initialized before calling this methode
-  Future<String> startDownload(String url, Function(int) callback, {String fileExtension = 'mp4', String? key}) {
-    /// TODO #1 check if the file is already downloaded by verifying if the url exists in the tasks inside _inCacheDownloadedTasks
-    if (true) {
-      /// TODO  if #1 is true
-      /// TODO save the key as a value for taskId in the _accessMap (_inCacheDownloadedTasks[index].taskId: key) & fill [_tasks], [_downloadingTasks] and _onProgressCallbacks
-
-      /// TODO resume the download of the file
-      /// TODO return the path of the downloaded/downloading file
+  Future<String> startDownload(String url, Function(int) callback, {String fileExtension = 'mp4', String? key}) async {
+    assert(external_downloader.FlutterDownloader.initialized, 'You must call init before calling this methode');
+    //check if the file is already downloaded by verifying if the url exists in the tasks inside _inCacheDownloadedTasks
+    int indexOfTask = _inCacheDownloadedTasks.indexWhere((element) => element.url == url);
+    if (indexOfTask != -1) {
+      // save the key as a value for taskId in the _accessMap (_inCacheDownloadedTasks[index].taskId: key) & fill [_tasks], [_downloadingTasks] and _onProgressCallbacks
+      _accessMap[_inCacheDownloadedTasks[indexOfTask].taskId] = key ?? url;
+      // resume the download of the file
+      _tasks[key ?? url] = _inCacheDownloadedTasks[indexOfTask];
+      external_downloader.FlutterDownloader.resume(taskId: _accessMap[key ?? url]!);
+      _onProgressCallbacks[key ?? url] = callback;
+      return _inCacheDownloadedTasks[indexOfTask].filePath;
     }
 
-    /// TODO if #1 is false enter the url to the download queue and get the taskId
-    /// TODO save taskId as key and key as value in the _accessMap
-    /// TODO get task from downloader package database and map it in [_downloadingTasks] & [_tasks] &  save [callback] in [_onProgressCallbacks]
-    /// TODO return the downloaded/downloading file path "$_saveDir/$taskId.$fileExtension"
-    return Future(() => '');
+    // enter the url to the download queue and get the taskId
+    String fileName = '${key ?? DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+    String? taskId = await external_downloader.FlutterDownloader.enqueue(
+        url: url,
+        savedDir: _saveDirectory.path,
+        fileName: fileName,
+        showNotification: false,
+        openFileFromNotification: false,
+    );
+    if(taskId == null) throw Exception('Failed to start download: taskId not found');
+
+    // save taskId as key and key as value in the _accessMap
+    _accessMap[key ?? url] = taskId;
+    _tasks[key ?? url] = DownloadTask(
+        taskId: taskId,
+        url: url,
+        createdAt: DateTime.now(),
+        filePath: '${_saveDirectory.path}/$fileName',
+        progress: 0,
+        status: DownloaderTaskStatus.enqueued
+    );
+    _onProgressCallbacks[key ?? url] = callback;
+    return _tasks[key ?? url]!.filePath;
   }
 
 
-  /// TODO Pauses the download of a file by given [key]
+  /// Pauses the download of a file by given [key]
   ///
   /// [DownloadManager] should be initialized before calling this methode
   void pauseDownload(String key) {
-    /// TODO get the taskId from [_accessMap] and pause the download of the file
+    assert(external_downloader.FlutterDownloader.initialized, 'You must call init before calling this methode');
+    if(!_accessMap.containsKey(key) || _accessMap[key] == null){
+      throw const DownloadException('cannot pause non started download');
+    }
+    external_downloader.FlutterDownloader.pause(taskId: _accessMap[key]!);
   }
 
-  /// TODO : Resumes the download of a file by given [key]
+  /// Resumes the download of a file by given [key]
   void resumeDownload(String key) {
-    /// TODO get the taskId from [_accessMap] and resume the download of the file
+    assert(external_downloader.FlutterDownloader.initialized, 'You must call init before calling this methode');
+    if(!_accessMap.containsKey(key) || _accessMap[key] == null){
+      throw const DownloadException('cannot resume non started download');
+    }
+    external_downloader.FlutterDownloader.resume(taskId: _accessMap[key]!);
   }
 
-  /// TODO : Cancels the download of a file by given [key]
+  /// Cancel the download of a file by given [key]
   void cancelDownload(String key) {
-    /// TODO get the taskId from [_accessMap] and cancel the download of the file
+    assert(external_downloader.FlutterDownloader.initialized, 'You must call init before calling this methode');
+    if(!_accessMap.containsKey(key) || _accessMap[key] == null){
+      throw const DownloadException('cannot cancel non started download');
+    }
+    external_downloader.FlutterDownloader.cancel(taskId: _accessMap[key]!);
+  }
+
+  /// Register callbacks for the downloader package
+  void registerProgressCallbackForTask(String taskId, Function(int) callback) {
+    _onProgressCallbacks[taskId] = callback;
   }
 
 
-  void registerProgressCallbackForTask(String taskId, Function(int, int) callback) {
-    /// TODO Register callbacks for the downloader package
+  /// Converts external package downloadTask to DownloaderTask
+  DownloadTask _mapDownloadTaskToDownloaderTask(external_downloader.DownloadTask task) {
+    return DownloadTask(
+      url: task.url,
+      taskId: task.taskId,
+      filePath: '${task.savedDir}/${(task.filename ?? task.taskId)}',
+      progress: task.progress,
+      status: DownloaderTaskStatus.fromInt(task.status.index),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(task.timeCreated * 1000),
+    );
   }
 
 
-  /// TODO methode to convert external package downloadTask to DownloaderTask
-  /*DownloaderTask _mapDownloadTaskToDownloaderTask(DownloadTask task) {
-    // TODO map from external model to internal model
-  }*/
+  /// A callback method used by the downloader package to provide download progress updates.
+  ///
+  /// Parameters:
+  ///   - [id] : The unique identifier of the download task.
+  ///   - [status] : The status of the download task.
+  ///   - [progress] : The progress value indicating the advancement of the download.
+  ///
+  /// This method is annotated with `@pragma('vm:entry-point')` to indicate it as
+  /// the entry point for Dart VM.
+  @pragma('vm:entry-point')
+  static void downloadCallback(String id, int status, int progress) {
+    // Lookup the send port by name.
+    final SendPort? send = IsolateNameServer.lookupPortByName('downloader_send_port');
+
+    // Send the download progress update to the registered port.
+    send?.send([id, status, progress]);
+  }
 
 
 }
