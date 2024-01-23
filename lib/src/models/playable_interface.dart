@@ -15,4 +15,10 @@ abstract class PlayableInterface {
 
   /// True if playable is initialized
   bool get isInitialized;
+
+  /// Returns the current position of the video or audio in seconds
+  Future<int> getCurrentPosition();
+
+  /// Returns true if the video or audio is playing
+  bool get isPlaying;
 }

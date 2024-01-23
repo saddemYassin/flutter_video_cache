@@ -32,6 +32,9 @@ class DownloadManager {
   /// The list of downloaded tasks in the downloader package local database on init
   final List<DownloadTask> _inCacheDownloadedTasks = <DownloadTask>[];
 
+
+
+
   DownloadManager._internal();
 
   factory DownloadManager() {
