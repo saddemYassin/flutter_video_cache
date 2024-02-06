@@ -1,10 +1,10 @@
+import 'dart:developer';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:ui';
-
-import 'package:flutter_downloader/flutter_downloader.dart' as external_downloader;
 import 'package:flutter_video_cache/flutter_video_cache.dart';
-import 'package:flutter_video_cache/src/models/downloader_task.dart';
+import 'package:flutter_video_cache/src/donwloader.dart';
+import 'package:flutter_video_cache/src/models/download_task.dart';
 import 'package:flutter_video_cache/src/models/exceptions/download_exception.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -42,6 +42,8 @@ class DownloadManager {
 
   late Directory _saveDirectory;
 
+  final Mp4FileDownloader _mp4FileDownloader = Mp4FileDownloader();
+
   final ReceivePort _port = ReceivePort();
 
 
@@ -63,12 +65,12 @@ class DownloadManager {
   /// Note: This method assumes the existence of external_downloader and related classes.
   ///
   /// Throws: May throw exceptions if there are issues during initialization.
-  Future<void> init() async {
+  Future<void> init({bool debug = false}) async {
     // Retrieve the persistent data path and set it to [_saveDirectory].
     _saveDirectory = await getApplicationDocumentsDirectory();
 
     // Initialize the downloader package from external_downloader.
-    external_downloader.FlutterDownloader.initialize(debug: false, ignoreSsl: true);
+    await external_downloader.FlutterDownloader.initialize(debug: debug, ignoreSsl: true);
 
     // Load all tasks from the downloader package and save them in [_inCacheDownloadedTasks].
     _inCacheDownloadedTasks.addAll(
@@ -82,23 +84,26 @@ class DownloadManager {
     // Register the port with IsolateNameServer and set up a listener for task updates.
     IsolateNameServer.registerPortWithName(_port.sendPort, 'downloader_send_port');
     _port.listen((dynamic data) {
-      String id = data[0];
+      String taskId = data[0];
       DownloaderTaskStatus status = DownloaderTaskStatus.fromInt(data[1]);
       int progress = data[2];
 
-      if (_accessMap[id] != null) {
+      log('>>> id: $taskId, status: $status, progress: $progress');
+      log('>>> $_accessMap');
+
+      if (taskId != null) {
         // Invoke progress callbacks if available.
-        if (_onProgressCallbacks[_accessMap[id]] != null) {
-          _onProgressCallbacks[_accessMap[id]]!(progress);
+        if (_onProgressCallbacks[taskId] != null) {
+          _onProgressCallbacks[taskId]!(progress);
         }
 
         // Update task status and manage downloading tasks.
-        if (_tasks[_accessMap[id]] != null) {
-          _tasks[_accessMap[id]]!.updateStatus(status);
-          if (_tasks[_accessMap[id]]!.status == DownloaderTaskStatus.running) {
-            _downloadingTasks[_accessMap[id]!] = _tasks[_accessMap[id]]!;
+        if (_tasks[taskId] != null) {
+          _tasks[taskId]!.updateStatus(status);
+          if (_tasks[taskId]!.status == DownloaderTaskStatus.running) {
+            _downloadingTasks[taskId!] = _tasks[taskId]!;
           } else {
-            _downloadingTasks.remove(_accessMap[id]);
+            _downloadingTasks.removeWhere((key, value) => key == taskId);
           }
         }
       }
@@ -118,16 +123,17 @@ class DownloadManager {
     int indexOfTask = _inCacheDownloadedTasks.indexWhere((element) => element.url == url);
     if (indexOfTask != -1) {
       // save the key as a value for taskId in the _accessMap (_inCacheDownloadedTasks[index].taskId: key) & fill [_tasks], [_downloadingTasks] and _onProgressCallbacks
-      _accessMap[_inCacheDownloadedTasks[indexOfTask].taskId] = key ?? url;
+      _accessMap[key ?? url] = _inCacheDownloadedTasks[indexOfTask].taskId;
       // resume the download of the file
-      _tasks[key ?? url] = _inCacheDownloadedTasks[indexOfTask];
+      _tasks[_inCacheDownloadedTasks[indexOfTask].taskId] = _inCacheDownloadedTasks[indexOfTask];
       external_downloader.FlutterDownloader.resume(taskId: _accessMap[key ?? url]!);
-      _onProgressCallbacks[key ?? url] = callback;
+      _onProgressCallbacks[_inCacheDownloadedTasks[indexOfTask].taskId] = callback;
       return _inCacheDownloadedTasks[indexOfTask].filePath;
     }
 
     // enter the url to the download queue and get the taskId
     String fileName = '${key ?? DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+    File file = await File('${_saveDirectory.path}/$fileName').create(recursive: true);
     String? taskId = await external_downloader.FlutterDownloader.enqueue(
         url: url,
         savedDir: _saveDirectory.path,
@@ -139,7 +145,7 @@ class DownloadManager {
 
     // save taskId as key and key as value in the _accessMap
     _accessMap[key ?? url] = taskId;
-    _tasks[key ?? url] = DownloadTask(
+    _tasks[taskId] = DownloadTask(
         taskId: taskId,
         url: url,
         createdAt: DateTime.now(),
@@ -147,8 +153,8 @@ class DownloadManager {
         progress: 0,
         status: DownloaderTaskStatus.enqueued
     );
-    _onProgressCallbacks[key ?? url] = callback;
-    return _tasks[key ?? url]!.filePath;
+    _onProgressCallbacks[taskId] = callback;
+    return _tasks[taskId]!.filePath;
   }
 
 
@@ -182,7 +188,7 @@ class DownloadManager {
   }
 
   /// Register callbacks for the downloader package
-  void registerProgressCallbackForTask(String taskId, Function(int) callback) {
+  void _registerProgressCallbackForTask(String taskId, Function(int) callback) {
     _onProgressCallbacks[taskId] = callback;
   }
 

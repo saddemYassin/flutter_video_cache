@@ -6,11 +6,15 @@ class MediaMetadata {
   /// The duration of the media content in seconds.
   final int duration;
 
+  /// The size of the media content in bytes
+  final int fileSize;
+
   /// The bitrate of the media content in bits per second.
   final int? bitrate;
 
   /// The MIME type of the media content.
   final String? mimType;
+
 
   /// Creates a [MediaMetadata] instance with the specified parameters.
   ///
@@ -20,17 +24,18 @@ class MediaMetadata {
   ///   - [mimType] : The MIME type of the media content.
   const MediaMetadata({
     required this.duration,
+    required this.fileSize,
     this.bitrate,
     this.mimType,
   });
 
   /// Returns a string representation of the [MediaMetadata] instance.
   @override
-  String toString() => 'MediaMetadata(duration: $duration, bitrate: $bitrate, mimType: $mimType)';
+  String toString() => 'MediaMetadata(duration: $duration, fileSize: $fileSize, bitrate: $bitrate, mimType: $mimType)';
 
   /// Computes the hash code for the [MediaMetadata] instance.
   @override
-  int get hashCode => Object.hash(duration, bitrate, mimType);
+  int get hashCode => Object.hash(duration, fileSize, bitrate, mimType);
 
   /// Checks if this [MediaMetadata] instance is equal to another object.
   ///
@@ -42,6 +47,7 @@ class MediaMetadata {
           other is MediaMetadata &&
               runtimeType == other.runtimeType &&
               duration == other.duration &&
+              fileSize == other.fileSize &&
               bitrate == other.bitrate &&
               mimType == other.mimType;
 }

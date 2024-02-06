@@ -10,7 +10,7 @@ class Utils {
     if(progress == 0) {
       return 0;
     }
-    return downloadedBytes / progress * 100;
+    return (downloadedBytes / progress) * 100;
   }
 
 }

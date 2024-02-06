@@ -5,6 +5,8 @@ import 'package:flutter_video_cache/src/video_streamer.dart';
 /// Enable [VideoStream] to play/pause a video or audio while streaming its content
 abstract class PlayableInterface {
 
+  Future<void> setDataSource(String filePath);
+
   Future<void> initialize();
 
   /// Plays a video or audio

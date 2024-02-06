@@ -12,9 +12,9 @@ class FlutterVideoCache {
 
 
   /// Initialize the package
-  static Future<void> init() async {
+  static Future<void> init({bool debug = false}) async {
     if(!_isInitialized) {
-      await DownloadManager.instance.init();
+      await DownloadManager.instance.init(debug: debug);
       _isInitialized = true;
     }
   }

@@ -1,4 +1,3 @@
-import 'package:flutter_video_cache/src/downloader_manager.dart';
 
 /// Represents the status of a [DownloadTask].
 enum DownloaderTaskStatus {
@@ -46,6 +45,19 @@ enum DownloaderTaskStatus {
   }
 }
 
+class DownloadTaskPropertiesKeys {
+  static const String url = 'url';
+  static const String taskId = 'taskId';
+  static const String filePath = 'savePath';
+  static const String progress = 'progress';
+  static const String headers = 'headers';
+  static const String status = 'status';
+  static const String createdAt = 'createdAt';
+  static const String totalSize = 'totalSize';
+  static const String startDownload = 'startDownload';
+  static const String endDownload = 'endDownload';
+}
+
 
 /// An internal Downloader Task used by [DownloadManager]
 ///
@@ -62,7 +74,18 @@ class DownloadTask {
   final String filePath;
 
   /// The download progress
-  final int progress;
+  int progress;
+
+
+  /// The total downloadSize
+  int totalSize;
+
+  /// The number of bytes that have been downloaded from the start of the download file
+  int startDownload;
+
+  /// The number of bytes that have been downloaded from the end of the download file
+  int endDownload;
+
 
   /// The download headers
   final String headers;
@@ -81,6 +104,9 @@ class DownloadTask {
     required this.taskId,
     required this.filePath,
     required this.progress,
+    required this.startDownload,
+    required this.endDownload,
+    required this.totalSize,
     this.headers = "",
     required this.status,
     required this.createdAt
@@ -91,9 +117,24 @@ class DownloadTask {
     this.status = status;
   }
 
+  factory DownloadTask.fromMap(Map<String, dynamic> map) {
+    return DownloadTask(
+      url: map[DownloadTaskPropertiesKeys.url],
+      taskId: map[DownloadTaskPropertiesKeys.taskId],
+      filePath: map[DownloadTaskPropertiesKeys.filePath],
+      progress: map[DownloadTaskPropertiesKeys.progress],
+      headers: map[DownloadTaskPropertiesKeys.headers],
+      status: DownloaderTaskStatus.fromInt(map[DownloadTaskPropertiesKeys.status]),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(map[DownloadTaskPropertiesKeys.createdAt]),
+      startDownload: map[DownloadTaskPropertiesKeys.startDownload],
+      endDownload: map[DownloadTaskPropertiesKeys.endDownload],
+      totalSize: map[DownloadTaskPropertiesKeys.totalSize],
+    );
+  }
+
   @override
   String toString() {
-    return 'DownloaderTask{url: $url, taskId: $taskId, filePath: $filePath, progress: $progress, headers: $headers, status: $status, createdAt: $createdAt}';
+    return 'DownloaderTask{url: $url, taskId: $taskId, filePath: $filePath, progress: $progress,totalSize: $totalSize, startDownload: $startDownload, endDownload: $endDownload, headers: $headers, status: $status, createdAt: $createdAt}';
   }
 
   @override
