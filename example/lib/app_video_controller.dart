@@ -1,3 +1,4 @@
+import 'dart:developer';
 import 'dart:io';
 import 'package:flutter_video_cache/flutter_video_cache.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
@@ -8,14 +9,35 @@ class AppVideoController extends PlayableInterface {
 
   bool _isPlaying = false;
 
-  
+  String? dataFilePath;
+
+  PlayingState _currentPlayingState = PlayingState.initializing;
   
   @override
   Future<void> setDataSource(String filePath) async {
       if(controller != null){
         await controller!.dispose();
       }
-      controller = VlcPlayerController.file(File(filePath), hwAcc: HwAcc.full,autoInitialize: false,autoPlay: false,options: VlcPlayerOptions());
+      dataFilePath = filePath;
+      File file = File(filePath);
+      controller = VlcPlayerController.file(
+          file,
+          hwAcc: HwAcc.auto,
+          autoInitialize: false,
+          autoPlay: false,
+      );
+
+      controller!.addListener(() {
+
+          if (_currentPlayingState != controller!.value.playingState && controller!.value.playingState == PlayingState.ended) {
+            _currentPlayingState = controller!.value.playingState;
+            controller!.setMediaFromFile(file, autoPlay: false, hwAcc: HwAcc.auto);
+          }
+          if(_currentPlayingState != controller!.value.playingState){
+            _currentPlayingState = controller!.value.playingState;
+            log('_currentPlayingState $_currentPlayingState');
+          }
+      });
   }
 
   
@@ -26,8 +48,10 @@ class AppVideoController extends PlayableInterface {
 
   @override
   Future<void> play() async {
-    await controller?.play();
-    _isPlaying = true;
+    if(controller!.value.isInitialized){
+      await controller!.play();
+      _isPlaying = true;
+    }
   }
 
   @override
@@ -36,6 +60,7 @@ class AppVideoController extends PlayableInterface {
   @override
   Future<int> getCurrentPosition() async {
     if(controller == null) return Future.value(0);
+    if(!controller!.value.isInitialized) return Future.value(0);
     return (await controller!.getPosition()).inSeconds;
   }
 
@@ -44,6 +69,7 @@ class AppVideoController extends PlayableInterface {
 
   @override
   Future<void> pause() async {
+    log('pause in app video controller');
     await controller?.pause();
     _isPlaying = false;
   }

@@ -120,10 +120,10 @@ class DownloadTask {
   factory DownloadTask.fromMap(Map<String, dynamic> map) {
     return DownloadTask(
       url: map[DownloadTaskPropertiesKeys.url],
-      taskId: map[DownloadTaskPropertiesKeys.taskId],
+      taskId: map[DownloadTaskPropertiesKeys.taskId].toString(),
       filePath: map[DownloadTaskPropertiesKeys.filePath],
       progress: map[DownloadTaskPropertiesKeys.progress],
-      headers: map[DownloadTaskPropertiesKeys.headers],
+      headers: map[DownloadTaskPropertiesKeys.headers] ?? "",
       status: DownloaderTaskStatus.fromInt(map[DownloadTaskPropertiesKeys.status]),
       createdAt: DateTime.fromMillisecondsSinceEpoch(map[DownloadTaskPropertiesKeys.createdAt]),
       startDownload: map[DownloadTaskPropertiesKeys.startDownload],
