@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_video_cache_example/app_video_controller.dart';
+import 'package:flutter_video_cache_example/vlc_player_with_controls.dart';
 import 'package:flutter_vlc_player/flutter_vlc_player.dart';
 
 class VideoPlayerWidget extends StatelessWidget {
@@ -21,6 +22,10 @@ class VideoPlayerWidget extends StatelessWidget {
     if(videoController.controller == null){
       return Container();
     }
-    return VlcPlayer(controller: videoController.controller!, aspectRatio: aspectRatio,placeholder: const Center(child: CircularProgressIndicator()),);
+    return AppPlayerWithControls(
+      controller: videoController,
+      aspectRatio: aspectRatio,
+      showControls: true,
+    );
   }
 }

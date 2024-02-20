@@ -15,9 +15,6 @@ class AppVideoController extends PlayableInterface {
   
   @override
   Future<void> setDataSource(String filePath) async {
-      if(controller != null){
-        await controller!.dispose();
-      }
       dataFilePath = filePath;
       File file = File(filePath);
       controller = VlcPlayerController.file(
@@ -35,7 +32,6 @@ class AppVideoController extends PlayableInterface {
           }
           if(_currentPlayingState != controller!.value.playingState){
             _currentPlayingState = controller!.value.playingState;
-            log('_currentPlayingState $_currentPlayingState');
           }
       });
   }
@@ -69,13 +65,18 @@ class AppVideoController extends PlayableInterface {
 
   @override
   Future<void> pause() async {
-    log('pause in app video controller');
     await controller?.pause();
     _isPlaying = false;
   }
 
   @override
   Future<void> initialize() async {
-    await controller?.initialize();
+    if(controller != null && controller!.viewId == null){
+      initialize();
+      return;
+    }
+    if(controller != null && !controller!.value.isInitialized){
+      await controller!.initialize();
+    }
   }
 }

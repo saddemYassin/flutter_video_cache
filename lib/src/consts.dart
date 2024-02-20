@@ -1,4 +1,4 @@
 
-const minDownloadFileSizeInBytes = 1 * 1024 * 1024;
-const mediaThreshHoldInSeconds = 3;
-const minSecondsToStartPlay = 0;
+const kMediaThreshHoldInSeconds = 3;
+const kMediaThreshHoldInToRestartPlay = 3;
+const kMinSecondsToStartPlay = 2;

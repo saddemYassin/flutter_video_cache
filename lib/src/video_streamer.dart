@@ -25,8 +25,14 @@ class VideoStream<T extends PlayableInterface> {
   /// The total duration of the media
   int _mediaDurationInSeconds = 0;
 
+  /// The [_mediaDurationInSeconds] getter
+  int get mediaDurationInSeconds => _mediaDurationInSeconds;
+
   /// The number of seconds of the loaded media inside [_dataFile]
   int _loadedMediaDurationInSeconds = 0;
+
+  /// The [_loadedMediaDurationInSeconds] getter
+  int get loadedMediaDurationInSeconds => _loadedMediaDurationInSeconds;
 
   /// True if the media is initialized
   ///
@@ -46,10 +52,14 @@ class VideoStream<T extends PlayableInterface> {
   bool _canStartPlaying = false;
 
   /// True if [play] is called and it's paused due to not enough data
-  bool _waitingForData = true;
+  bool _waitingForData = false;
 
   /// True if is precaching data
   bool _isPreCaching = false;
+
+
+  /// [_isPreCaching] getter
+  bool get isPreCaching => _isPreCaching;
 
   /// The total length of [_dataFile]
   double _fileTotalLength = 0;
@@ -57,6 +67,8 @@ class VideoStream<T extends PlayableInterface> {
   Completer<void>? _setDataSourceCompleter;
 
   Completer<void>? _initCompleter;
+
+  Completer<void>? _initPreCachingCompleter;
 
   /// A list of callback that should be called by [onProgress]
   final List<void Function({required int percentage,required int loadedSeconds,required int loadedBytes})> _onProgressCallbacks = [];
@@ -74,7 +86,6 @@ class VideoStream<T extends PlayableInterface> {
     } else {
       this.cacheKey = cacheKey;
     }
-
   }
 
 
@@ -95,13 +106,12 @@ class VideoStream<T extends PlayableInterface> {
   /// [playable], and [_dataFile].
   ///
   /// Throws: May throw exceptions if there are issues during pre-caching or setting the data source.
-  Future<void> setDataSource() async {
+  Future<void> injectDataSource() async {
     // If media is not initialized, pre-cache it before setting the data source.
     if (!_mediaInitialized) {
-      if(_isPreCaching){
-        _setDataSourceCompleter = Completer();
-      } else {
-        await preCache();
+      _setDataSourceCompleter = Completer();
+      if(!_isPreCaching){
+        preCache();
       }
     }
 
@@ -121,7 +131,9 @@ class VideoStream<T extends PlayableInterface> {
   /// Prepares the video/audio to be played and start/resume precaching video
   Future<void> initialize() async {
     if(_mediaInitialized && _dataSourceInitialized) {
-      await playable.initialize();
+      if(playable != null && !playable.isInitialized){
+        await playable.initialize();
+      }
       if(!_canStartPlaying){
         _initCompleter = Completer();
         return _initCompleter!.future;
@@ -134,9 +146,11 @@ class VideoStream<T extends PlayableInterface> {
   /// Start pre-caching the video/audio
   Future<void> preCache() async {
     if(!_isPreCaching){
+      print('start Precache in video streamer $cacheKey');
       _isPreCaching = true;
       // call [_downloaderManager.startDownload(url,onProgress, cacheKey)] and get filePath
       if(_dataFile == null) {
+        _initPreCachingCompleter = Completer();
         DownloadTask task = await _downloaderManager.startDownload(url, onProgress, key: cacheKey);
         // init [_dataFile]
         _dataFile == null ? _dataFile = File(task.filePath) : null;
@@ -152,22 +166,34 @@ class VideoStream<T extends PlayableInterface> {
 
         _completeDataSource();
 
+        // Notify listeners if the there's already a [_onProgressCallbacks]
+        for(var callback in _onProgressCallbacks){
+          callback(percentage: _mediaDurationInSeconds == 0 ? 0 : _loadedMediaDurationInSeconds ~/ _mediaDurationInSeconds * 100, loadedSeconds: _loadedMediaDurationInSeconds, loadedBytes: task.startDownload + task.endDownload);
+        }
+        _initPreCachingCompleter!.complete();
         return;
       }
-      _downloaderManager.resumeDownload(cacheKey);
+      resumePreCaching();
     }
   }
 
   /// Pause pre-caching the video/audio
-  void pausePreCaching(){
-    _isPreCaching = false;
+  void pausePreCaching() async {
+    if(!_isPreCaching) return;
+    if(_initPreCachingCompleter != null && !_initPreCachingCompleter!.isCompleted){
+      await _initPreCachingCompleter!.future;
+    }
     _downloaderManager.pauseDownload(cacheKey);
+    _isPreCaching = false;
   }
 
   /// Resume pre-caching the video/audio
-  void resumePreCaching(){
-    _isPreCaching = true;
+  void resumePreCaching() async {
+    if(_initPreCachingCompleter != null && !_initPreCachingCompleter!.isCompleted){
+      await _initPreCachingCompleter!.future;
+    }
     _downloaderManager.resumeDownload(cacheKey);
+    _isPreCaching = true;
   }
 
 
@@ -195,18 +221,21 @@ class VideoStream<T extends PlayableInterface> {
   /// Plays the video
   Future<void> play() async {
     assert(_dataSourceInitialized && isInitialized, 'Media and data source must be initialized before playing');
-    log('_canStartPlaying && !_waitingForData: ${_canStartPlaying} && ${_waitingForData}');
-    if(_canStartPlaying && !_waitingForData && _loadedMediaDurationInSeconds > minSecondsToStartPlay + mediaThreshHoldInSeconds){
+    print('_canStartPlaying $_canStartPlaying  && _waitingForData $_waitingForData && _mediaDurationInSeconds > 0 $_mediaDurationInSeconds && (_loadedMediaDurationInSeconds $_loadedMediaDurationInSeconds > kMinSecondsToStartPlay + kMediaThreshHoldInSeconds || _loadedMediaDurationInSeconds == _mediaDurationInSeconds)');
+    if(_canStartPlaying && !_waitingForData && _mediaDurationInSeconds > 0 && (_loadedMediaDurationInSeconds > kMinSecondsToStartPlay + kMediaThreshHoldInSeconds || _loadedMediaDurationInSeconds == _mediaDurationInSeconds)) {
+      print('+++ play in video streamer $cacheKey');
       _setFutureCheckForEnoughDataTimer();
       preCache();
       playable.play();
     } else {
-      //set _needToPlay to true
+      print('+++ set waiting for data in video streamer $cacheKey');
+      //set _waitingForData to true
       _waitingForData = true;
       preCache();
     }
   }
 
+  /// Pauses the video
   void pause() {
     /// set _needToPlay to false
     _waitingForData = false;
@@ -223,7 +252,7 @@ class VideoStream<T extends PlayableInterface> {
   /// flag to true when pausing due to insufficient data.
   ///
   /// Note: This method is intended for internal use and assumes the existence of
-  /// [playable], [_loadedMediaDurationInSeconds], [mediaThreshHoldInSeconds], and [_waitingForData].
+  /// [playable], [_loadedMediaDurationInSeconds], [kMediaThreshHoldInSeconds], and [_waitingForData].
   ///
   /// Throws: Throws an exception if there is an issue retrieving the current playable position.
   void _setFutureCheckForEnoughDataTimer() async {
@@ -231,7 +260,7 @@ class VideoStream<T extends PlayableInterface> {
       /// set timer when start playing and pause it if current seconds > [_loadedMediaDurationInSeconds] - [mediaThreshHoldInSeconds]
       playingCheckTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
         int currentPlayablePosition = await playable.getCurrentPosition();
-        if(_loadedMediaDurationInSeconds < currentPlayablePosition + mediaThreshHoldInSeconds && _mediaDurationInSeconds >= currentPlayablePosition + mediaThreshHoldInSeconds && playable.isPlaying) {
+        if(mediaDurationInSeconds > _loadedMediaDurationInSeconds && mediaDurationInSeconds > currentPlayablePosition + kMediaThreshHoldInSeconds && _loadedMediaDurationInSeconds < currentPlayablePosition + kMediaThreshHoldInSeconds && playable.isPlaying) {
           playable.pause();
           _waitingForData = true;
           timer.cancel();
@@ -267,7 +296,7 @@ class VideoStream<T extends PlayableInterface> {
   ///
   /// This method removes the specified [callback] from the list of progress callbacks.
   void removeCallback(void Function({required int percentage,required int loadedSeconds,required int loadedBytes}) callback){
-    _onProgressCallbacks.removeWhere((element) => element == callback);
+    _onProgressCallbacks.remove(callback);
   }
 
   /// Callback method invoked during the progress of file download.
@@ -281,7 +310,9 @@ class VideoStream<T extends PlayableInterface> {
 
     if(progress == 0) return;
 
-    log('Key: $cacheKey, progress: $progress, total: $total');
+    if(_isPreCaching && _mediaDurationInSeconds > 0 && _mediaDurationInSeconds == _loadedMediaDurationInSeconds){
+      _isPreCaching = false;
+    }
 
     // If playback hasn't started yet, search for metadata in the file.
     if (!_canStartPlaying) {
@@ -304,11 +335,10 @@ class VideoStream<T extends PlayableInterface> {
     int currentPlayablePosition = await playable.getCurrentPosition();
 
 
-    log('cache Key: $cacheKey ,url: $url, _loadedMediaDurationInSeconds $_loadedMediaDurationInSeconds, currentPlayablePosition $currentPlayablePosition');
 
     // Check if waiting for data and if it's time to resume playback.
     if (_waitingForData) {
-      if (_loadedMediaDurationInSeconds > currentPlayablePosition + mediaThreshHoldInSeconds) {
+      if (_loadedMediaDurationInSeconds > currentPlayablePosition + kMediaThreshHoldInSeconds + kMediaThreshHoldInToRestartPlay || _loadedMediaDurationInSeconds == _mediaDurationInSeconds) {
         _waitingForData = false;
         play();
       }
@@ -323,7 +353,6 @@ class VideoStream<T extends PlayableInterface> {
 
 
   Future<void> verifyMetadata(int total, int downloaded) async {
-    log('in verifyMetadata total: $total,Downloaded $downloaded');
     MediaMetadata? metadata = await MediaMetadataUtils.retrieveMetadataFromFile(_dataFile!);
 
     // If metadata is unavailable, return early.
@@ -331,18 +360,24 @@ class VideoStream<T extends PlayableInterface> {
       return;
     }
 
-    log('metadata in verifyMetadata $metadata');
+
     // Set _canStartPlaying to true and update _mediaDurationInSeconds from metadata.
     _canStartPlaying = true;
     _mediaDurationInSeconds = metadata.duration;
     _fileTotalLength = total.toDouble();
-    _loadedMediaDurationInSeconds = downloaded ~/ _fileTotalLength * _mediaDurationInSeconds;
+    _loadedMediaDurationInSeconds =  (downloaded / _fileTotalLength * _mediaDurationInSeconds).toInt();
     var currentPlayingPosition = await playable.getCurrentPosition();
-    if(_loadedMediaDurationInSeconds > currentPlayingPosition + mediaThreshHoldInSeconds || total == downloaded) {
-      log('in verifyMetadata 2 $_loadedMediaDurationInSeconds , $currentPlayingPosition');
+    if(_loadedMediaDurationInSeconds > currentPlayingPosition + kMediaThreshHoldInSeconds || _loadedMediaDurationInSeconds == _mediaDurationInSeconds) {
       _waitingForData = false;
     }
   }
+
+
+  @override
+  String toString() {
+    return 'VideoStream(playable: ${playable.runtimeType}, cacheKey: $cacheKey, url: $url, filePath: ${_dataFile?.path ?? 'Not defined yet'}, mediaDurationInSeconds: $_mediaDurationInSeconds, fileTotalLength: $_fileTotalLength, loadedMediaDurationInSeconds: $_loadedMediaDurationInSeconds, waitingForData: $_waitingForData, canStartPlaying: $_canStartPlaying)';
+  }
+
 
 
 }
