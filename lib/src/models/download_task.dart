@@ -80,10 +80,10 @@ class DownloadTask {
   /// The total downloadSize
   int totalSize;
 
-  /// The number of bytes that have been downloaded from the start of the download file
+  /// The number of bytes that have been downloaded from the start of the file
   int startDownload;
 
-  /// The number of bytes that have been downloaded from the end of the download file
+  /// The number of bytes that have been downloaded from the end of the file
   int endDownload;
 
 
@@ -113,10 +113,11 @@ class DownloadTask {
   });
 
   /// Updates task status
-  void updateStatus(DownloaderTaskStatus status) {
+  void updateStatus(DownloaderTaskStatus status,String source) {
     this.status = status;
   }
 
+  /// Creates an instance of DownloadTask from a map
   factory DownloadTask.fromMap(Map<String, dynamic> map) {
     return DownloadTask(
       url: map[DownloadTaskPropertiesKeys.url],
