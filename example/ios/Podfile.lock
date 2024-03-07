@@ -1,4 +1,6 @@
 PODS:
+  - app_minimizer (0.0.1):
+    - Flutter
   - Flutter (1.0.0)
   - flutter_video_cache (0.0.1):
     - Flutter
@@ -18,6 +20,7 @@ PODS:
     - FlutterMacOS
 
 DEPENDENCIES:
+  - app_minimizer (from `.symlinks/plugins/app_minimizer/ios`)
   - Flutter (from `Flutter`)
   - flutter_video_cache (from `.symlinks/plugins/flutter_video_cache/ios`)
   - flutter_video_info (from `.symlinks/plugins/flutter_video_info/ios`)
@@ -31,6 +34,8 @@ SPEC REPOS:
     - MobileVLCKit
 
 EXTERNAL SOURCES:
+  app_minimizer:
+    :path: ".symlinks/plugins/app_minimizer/ios"
   Flutter:
     :path: Flutter
   flutter_video_cache:
@@ -47,6 +52,7 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/sqflite/darwin"
 
 SPEC CHECKSUMS:
+  app_minimizer: a7e8bf2b20361723f210b079a8ab00230942ff6d
   Flutter: f04841e97a9d0b0a8025694d0796dd46242b2854
   flutter_video_cache: 7fd5c7e1037a132658b9a97579e1956d0ccbc54c
   flutter_video_info: a932e1b0da369bba95c3a14b7f61d5f8b0d03280

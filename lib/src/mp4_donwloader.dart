@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:developer';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:dio_http2_adapter/dio_http2_adapter.dart';
 import 'package:flutter_video_cache/src/media_metadata_utils.dart';
+import 'package:flutter_video_cache/src/models/cancel_raison.dart';
 import 'package:flutter_video_cache/src/models/download_task.dart';
+import 'package:flutter_video_cache/src/models/exceptions/download_exception.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
@@ -17,6 +18,8 @@ class Mp4FileDownloader {
 
   /// A database instance for data storage.
   late Database _db;
+
+  Database get database => _db;
 
   /// A directory where to save downloaded files
   late Directory saveDir;
@@ -31,13 +34,21 @@ class Mp4FileDownloader {
   final Map<String, CancelToken> _cancelTokens = <String, CancelToken>{};
 
 
-  final List<void Function({required String url, required int received, required int total})> _callbacks = [];
+  final List<void Function({required String url, required String taskId, required double progress, required int total, required int status})> _callbacks = [];
 
 
-  static const metadataExpectedSize = 10000;
+  /// Expected size of metadata for processing, set to 50000.
+  ///
+  /// This constant represents the expected size of metadata used in various processing tasks.
+  /// It is set to 50000 as a default value.
+  static const metadataExpectedSize = 50000;
 
 
+  /// True if [Mp4FileDownloader] is initialized.
   bool _isInitialized = false;
+
+  /// Getter to check if the downloader is initialized.
+  bool get isInitialized => _isInitialized;
 
 
   static final Mp4FileDownloader _instance = Mp4FileDownloader._internal();
@@ -50,16 +61,16 @@ class Mp4FileDownloader {
   /// Internal constructor for the singleton instance.
   ///
   /// This constructor initializes the Dio instance with logging and HTTP2 support,
-  /// and it initializes the database.
+  /// and it initializes the database.https://firebasestorage.googleapis.com/v0/b/tested4you-t4ulabs.appspot.com/o/videos%2F0BooSobnyRafB20AdUy3%2F720.mp4?alt=media&token=a95d5ba7-0489-486b-abb6-1caac7f6907d
   Mp4FileDownloader._internal() {
-    init();
-    dio = Dio();
+    dio = Dio(BaseOptions(receiveDataWhenStatusError: true));
     dio.interceptors.add(LogInterceptor(responseBody: true));
     dio.httpClientAdapter = Http2Adapter(ConnectionManager(
       idleTimeout: const Duration(seconds: 10),
       onClientCreate: (_, config) => config.onBadCertificate = (_) => true,
     ));
   }
+
 
   /// Initializes the database and directory for tracking download information.
   ///
@@ -96,12 +107,30 @@ class Mp4FileDownloader {
     ''');
       });
       List<Map<String,dynamic>> results = await getDownloads();
-      List<DownloadTask> tasksList = (results.map((e) => DownloadTask.fromMap(e)).toList());
+      List<DownloadTask> tasksList = (results.map((e) => DownloadTask.fromMap(e)).toSet().toList());
       _tasks.addAll(tasksList.asMap().map((key, value) => MapEntry(value.url, value)));
+      for(var k in _tasks.keys){
+        if([DownloaderTaskStatus.enqueued,DownloaderTaskStatus.running].contains(_tasks[k]!.status)) {
+          if(_tasks[k]!.totalSize > 0 && _tasks[k]!.totalSize == _tasks[k]!.startDownload + _tasks[k]!.endDownload) {
+            _tasks[k]!.updateStatus(DownloaderTaskStatus.complete,'complete in init');
+            _updateDownloadStatus(_tasks[k]!.url, DownloaderTaskStatus.complete);
+            continue;
+          }
+          if(_tasks[k]!.status == DownloaderTaskStatus.complete && _tasks[k]!.totalSize == 0){
+            _tasks[k]!.updateStatus(DownloaderTaskStatus.undefined,'undifined in init');
+            _updateDownloadStatus(_tasks[k]!.url, DownloaderTaskStatus.undefined);
+            continue;
+          }
+          _tasks[k]!.updateStatus(DownloaderTaskStatus.paused,'paused in init');
+          _updateDownloadStatus(_tasks[k]!.url, DownloaderTaskStatus.paused);
+        }
+      }
       _isInitialized = true;
     }
   }
 
+
+  List<DownloadTask> get downloadedTasks => _tasks.values.toList();
 
   /// Registers a callback function to receive progress updates during downloads.
   ///
@@ -113,7 +142,7 @@ class Mp4FileDownloader {
   ///                 - [url] : The URL of the resource being downloaded.
   ///                 - [received] : The amount of data received (downloaded) so far.
   ///                 - [total] : The total size of the resource being downloaded.
-  void registerCallback(void Function({required String url, required int received, required int total}) callback) {
+  void registerCallback(void Function({required String url,required String taskId, required double progress, required int total,required int status}) callback) {
     _callbacks.add(callback);
   }
 
@@ -133,8 +162,8 @@ class Mp4FileDownloader {
   /// Throws:
   ///   - [Exception] if the task is already started.
   ///   - May throw other exceptions if there are issues during the download.
-  Future<String> startDownload(String url,String fileName) async {
-    Completer<String>? completer = Completer();
+  Future<DownloadTask> startDownload(String url,String fileName) async {
+    Completer<DownloadTask>? completer = Completer();
     try {
       String savePath = _getSavePath(url,fileName);
 
@@ -145,21 +174,20 @@ class Mp4FileDownloader {
       if(_tasks.containsKey(url)){
 
         if(_tasks[url]!.status == DownloaderTaskStatus.complete && fileExist){
-          return _tasks[url]!.filePath;
+          return _tasks[url]!;
         }
 
-        if([DownloaderTaskStatus.enqueued, DownloaderTaskStatus.running, DownloaderTaskStatus.paused].contains(_tasks[url]!.status)){
+        if([DownloaderTaskStatus.enqueued, DownloaderTaskStatus.running].contains(_tasks[url]!.status)){
           throw Exception('Task already started');
         }
 
       }
 
-
       if(!fileExist){
         await file.create(recursive: true);
       }
 
-      CancelToken cancelToken = CancelToken();
+
       int taskId = await _db.insert('Downloads', {
         DownloadTaskPropertiesKeys.url: url,
         DownloadTaskPropertiesKeys.filePath: savePath,
@@ -171,7 +199,9 @@ class Mp4FileDownloader {
         DownloadTaskPropertiesKeys.status: DownloaderTaskStatus.enqueued.index
       });
 
-      DownloadTask downloadTask = DownloadTask(
+      _cancelTokens[url] = CancelToken();
+
+      _tasks[url] = DownloadTask(
           taskId: taskId.toString(),
           url: url,
           filePath: savePath,
@@ -182,60 +212,64 @@ class Mp4FileDownloader {
           createdAt: DateTime.now(),
           status: DownloaderTaskStatus.enqueued);
 
-      _tasks[url] = downloadTask;
-
+      bool downloadFileEndCalled = false;
       dio.download(
         url,
         file.path,
         onReceiveProgress: (received, total) async {
+          double progress = (received / total * 100);
           for(var callback in _callbacks){
-            callback(received: received, total: total, url: url);
+            callback(progress: progress,taskId: taskId.toString(),  total: total, url: url,status: _tasks[url]!.status.index);
           }
-          log('first download $received from $total');
-          downloadTask.progress = received;
-          downloadTask.totalSize = total;
-          downloadTask.startDownload  = file.lengthSync();
-          _updateDownloadProgressAndTotal(url, received, total);
-          _updateStartDownload(url, downloadTask.startDownload);
+          _tasks[url]!.progress = progress.toInt();
+          _tasks[url]!.totalSize = total;
+          _tasks[url]!.startDownload  = file.lengthSync();
+          if(received == total){
+            _tasks[url]!.updateStatus(DownloaderTaskStatus.complete,'start download done');
+            _updateDownloadStatus(url, DownloaderTaskStatus.complete);
+          }
+          _updateDownloadProgressAndTotal(url, progress.toInt(), total);
+          _updateStartDownload(url, _tasks[url]!.startDownload);
           if(received > metadataExpectedSize && completer != null){
             var metadata = await MediaMetadataUtils.retrieveMetadataFromFile(file);
-            if(metadata == null){
-              _safeCancelTokenByUrl(url,'search for metadata');
-              _cancelTokens.removeWhere((key, value) => key == url);
-              await _downloadMetadataFromTheFileEnd(url: url,file: file,totalSize: total,startDownload: downloadTask.startDownload,fromEndToDownload: metadataExpectedSize);
+            if((metadata == null || metadata.duration == 0) && !downloadFileEndCalled){
+              downloadFileEndCalled = true;
+              _safeCancelToken(url,'search for metadata');
+              await _downloadMetadataFromTheFileEnd(url: url,file: file,totalSize: total,startDownload: _tasks[url]!.startDownload,fromEndToDownload: metadataExpectedSize,initCompleter: completer);
               metadata = await MediaMetadataUtils.retrieveMetadataFromFile(file);
-              _tasks[url]!.status = DownloaderTaskStatus.paused;
+              _tasks[url]!.updateStatus(DownloaderTaskStatus.paused,'paused in start download');
               _updateDownloadStatus(url, DownloaderTaskStatus.paused);
               if(completer != null){
                 _continueDownload(url);
-                completer?.complete(file.path);
+                completer?.complete(_tasks[url]!);
                 completer = null;
               }
             }
 
-            if(completer != null){
-              completer?.complete(file.path);
+            if(completer != null && metadata != null && metadata.duration > 0){
+              completer?.complete(_tasks[url]!);
               completer = null;
             }
           }
 
         },
         deleteOnError: false,
-        cancelToken: cancelToken,
+        cancelToken: _cancelTokens[url],
       ).then((value) {
-        if(downloadTask.totalSize == downloadTask.startDownload + downloadTask.endDownload){
-          downloadTask.status = DownloaderTaskStatus.complete;
-          _updateDownloadStatus(url, downloadTask.status);
+        if(_tasks[url]!.totalSize == _tasks[url]!.startDownload + _tasks[url]!.endDownload){
+          _tasks[url]!.updateStatus(DownloaderTaskStatus.complete,'start download done');
+          _updateDownloadStatus(url, _tasks[url]!.status);
         }
+      }).onError((error, stackTrace) {
+        _handleInitError(error, url, completer);
       });
-      _cancelTokens[url] = cancelToken;
 
 
 
       if(completer != null){
         return completer!.future;
       }
-      return file.path;
+      return _tasks[url]!;
     } catch (e) {
       rethrow;
     }
@@ -258,31 +292,26 @@ class Mp4FileDownloader {
   ///   - [Exception] if the file associated with the task does not exist.
   Future<(File, DownloadTask)> _getTaskAndFileFromUrlToContinueDownload(String url) async {
     late DownloadTask currentTask;
-
     // Check if the task is in memory
     if (_tasks.containsKey(url)) {
       currentTask = _tasks[url]!;
     } else {
       // Retrieve the task from the database
+
       var taskDbObject = await _getDownload(url);
+
       if (taskDbObject == null) {
         throw Exception('Task not found');
       }
-
       currentTask = DownloadTask.fromMap(taskDbObject);
+
     }
 
-    // Log the current task
-    log('Current Task: $currentTask');
-
-    // Check if the task status allows for continuing the download
-    if (currentTask.status == DownloaderTaskStatus.complete) {
-      log('[Downloader] continueDownload: File already downloaded');
+    if(currentTask.status == DownloaderTaskStatus.complete){
       throw Exception('File already downloaded. Cannot continue download.');
     }
 
     if ([DownloaderTaskStatus.enqueued, DownloaderTaskStatus.running].contains(currentTask.status)) {
-      log('[Downloader] continueDownload: File already downloading/running');
       throw Exception('File already downloading/running. Cannot continue download.');
     }
 
@@ -296,6 +325,8 @@ class Mp4FileDownloader {
 
     return (file, currentTask);
   }
+
+
 
 
   /// Continues the download process for the specified [url].
@@ -313,49 +344,68 @@ class Mp4FileDownloader {
     var (file, currentTask) = await _getTaskAndFileFromUrlToContinueDownload(url);
 
     // Create a cancel token for the HTTP request
-    CancelToken cancelToken = CancelToken();
+    if(!_cancelTokens.containsKey(url)){
+      _cancelTokens[url] = CancelToken();
+    }
 
-    // Make a HTTP GET request to resume the download
-    var response = await dio.get<ResponseBody>(
-      url,
-      options: Options(
-        headers: {'Range': 'bytes=${currentTask.startDownload}-${currentTask.totalSize - currentTask.endDownload}'},
-        responseType: ResponseType.stream,
-      ),
-      cancelToken: cancelToken,
-      onReceiveProgress: (received, total) async {
-        // Notify callbacks about progress updates
-        for (var callback in _callbacks) {
-          callback(received: received, total: total, url: url);
-        }
-        log('Received: $received, Total: $total');
-        // Update download progress in the database
-        _updateDownloadProgress(url, received);
-      },
-    );
-    _cancelTokens[url] = cancelToken;
+    try {
+      if((currentTask.startDownload + currentTask.endDownload) == currentTask.totalSize){
+        _updateDownloadStatus(url, DownloaderTaskStatus.complete);
+        _tasks[url]!.updateStatus(DownloaderTaskStatus.complete,'_continueDownload first if check');
+        return;
+      }
+      _tasks[url]!.updateStatus(DownloaderTaskStatus.running,'_continueDownload 1');
+      _updateDownloadStatus(url, _tasks[url]!.status);
 
-    // Get the current size of the file
-    var fileSize = await file.length();
-    log('File start size: $fileSize');
+      // Make a HTTP GET request to resume the download
+      var response = await dio.get<ResponseBody>(
+        url,
+        options: Options(
+          headers: {'Range': 'bytes=${currentTask.startDownload}-${currentTask.totalSize - currentTask.endDownload - (currentTask.endDownload > 0 ? 1 : 0)}'},
+          responseType: ResponseType.stream,
+        ),
+        cancelToken: _cancelTokens[url],
+      ).onError((error, stackTrace) async {
+        // return empty result
+        return Response(requestOptions: RequestOptions(data: []));
+      });
 
-    // Open the file in append mode
-    RandomAccessFile fileAccess = file.openSync(mode: FileMode.append);
-    fileAccess.setPositionSync(currentTask.startDownload);
+      // Open the file in append mode
+      RandomAccessFile fileAccess = file.openSync(mode: FileMode.append);
 
-    // Stream data to the file
-    response.data?.stream.listen((bytes) {
-      fileAccess.writeFromSync(bytes.toList());
-      currentTask.startDownload += bytes.length;
       fileAccess.setPositionSync(currentTask.startDownload);
-      _updateStartDownload(url, currentTask.startDownload);
-    }).onDone(() {
-      // Once download completes, update task status to 'complete' in the database
-      log('[Downloader]: _continueDownload: Done');
-      currentTask.status = DownloaderTaskStatus.complete;
-      _updateDownloadStatus(url, currentTask.status);
-      _cancelTokens.removeWhere((key, value) => key == url);
-    });
+
+      bool debuged = false;
+      // Stream data to the file
+      response.data?.stream.listen((bytes) {
+        fileAccess.writeFromSync(bytes.toList());
+        currentTask.startDownload += bytes.length;
+        fileAccess.setPositionSync(currentTask.startDownload);
+        _updateStartDownload(url, currentTask.startDownload);
+        currentTask.progress = ((currentTask.startDownload + currentTask.endDownload) / currentTask.totalSize * 100).toInt();
+        _updateDownloadProgress(url, currentTask.progress);
+        _tasks[url] = currentTask;
+        if(!debuged){
+          debuged = true;
+        }
+        for(var callback in _callbacks){
+          callback(url: url,taskId: currentTask.taskId, progress: (currentTask.startDownload + currentTask.endDownload) / currentTask.totalSize * 100, total: currentTask.totalSize,status: _tasks[url]!.status.index);
+        }
+      }).onDone(() {
+        // Once download completes, update task status to 'complete' in the database
+        if(currentTask.totalSize > 0 && (currentTask.startDownload + currentTask.endDownload == currentTask.totalSize)) {
+          currentTask.updateStatus(DownloaderTaskStatus.complete,'_continueDownload 2');
+          _updateDownloadStatus(url, currentTask.status);
+          _updateDownloadProgress(url, 100);
+          _tasks[url] = currentTask;
+        }
+        _cancelTokens.removeWhere((key, value) => key == url);
+      });
+    } catch(e) {
+      _tasks[url]!.updateStatus(DownloaderTaskStatus.failed,'_downloadMetadataFromTheFileEnd failed');
+      _updateDownloadStatus(url, _tasks[url]!.status);
+      rethrow;
+    }
   }
 
 
@@ -381,14 +431,8 @@ class Mp4FileDownloader {
     required int totalSize,
     required int startDownload,
     required int fromEndToDownload,
+    required Completer<DownloadTask>? initCompleter
   }) async {
-    // Log the start of the metadata download process
-    log('[Downloader]: Downloading metadata from the end of the file: $url, $fromEndToDownload');
-
-    // Create a cancel token for the HTTP request
-    CancelToken cancelToken = CancelToken();
-    _cancelTokens[url] = cancelToken;
-
     // Make a HTTP GET request to fetch metadata from the end of the file
     Response response = await dio.get(
       url,
@@ -396,12 +440,11 @@ class Mp4FileDownloader {
         headers: {'Range': 'bytes=${totalSize - fromEndToDownload}-$totalSize'},
         responseType: ResponseType.bytes,
       ),
-      cancelToken: cancelToken,
-    );
+    ).onError((error, stackTrace) {
+      _handleInitError(error, url, initCompleter);
+      return Response(requestOptions: RequestOptions(data: []));
+    });
 
-    // Read existing metadata from the file
-    Uint8List metadata = file.readAsBytesSync();
-    log('[Downloader]: Existing metadata length: ${metadata.length}');
 
     // Open the file in append mode and write the received metadata
     RandomAccessFile fileAccess = file.openSync(mode: FileMode.append);
@@ -410,16 +453,35 @@ class Mp4FileDownloader {
     fileAccess.closeSync();
 
     // Log the current size of the file after downloading metadata
-    log('[Downloader]: File size after downloading metadata: ${file.lengthSync()}');
 
+    _tasks[url]!.endDownload = fromEndToDownload;
     // Update the end download position in the database
     _updateEndDownload(url, fromEndToDownload);
 
     // Remove the cancel token from the tokens map
     _cancelTokens.removeWhere((key, value) => key == url);
+  }
 
-    // Log the completion of the download process
-    log('[Downloader]: Download from end of metadata completed');
+
+  /// Handles initialization errors that occur during downloading.
+  ///
+  /// This method removes the download task associated with the URL from internal data structures
+  /// and database if the error is not a cancellation error. It also completes the provided completer
+  /// with a DownloadException if it is not null.
+  ///
+  /// Parameters:
+  ///   - [error] : The error object encountered during downloading.
+  ///   - [url] : The URL associated with the download task.
+  ///   - [completer] : A completer to complete with an error if not null.
+  void _handleInitError(Object? error, String url, Completer<void>? completer) {
+    if (error is DioException && error.type != DioExceptionType.cancel) {
+      _cancelTokens.remove(url);
+      _tasks.remove(url);
+      _deleteDownloadTaskFromDB(url);
+      if (completer != null) {
+        completer.completeError(DownloadException('Error downloading $url'));
+      }
+    }
   }
 
 
@@ -514,7 +576,6 @@ class Mp4FileDownloader {
   /// Throws: May throw exceptions if there are issues during the database update.
   Future<void> _updateDownloadStatus(String url, DownloaderTaskStatus status) async {
     await _db.rawUpdate('UPDATE Downloads SET ${DownloadTaskPropertiesKeys.status} = ? WHERE url = ?', [status.index, url]);
-    log('_updateDownloadStatus called');
   }
 
   /// Pauses an ongoing download for the specified [url].
@@ -530,14 +591,11 @@ class Mp4FileDownloader {
   ///
   /// Throws: May throw exceptions if there are issues during the database update.
   Future<void> pauseDownload(String url) async {
-    if(_cancelTokens.containsKey(url)){
-      _safeCancelTokenByUrl(url, 'pause download');
-      _cancelTokens.removeWhere((key, value) => key == url);
+      _safeCancelToken(url, 'pause download');
       if(_tasks.containsKey(url)){
-        _tasks[url]?.updateStatus(DownloaderTaskStatus.paused);
+        _tasks[url]!.updateStatus(DownloaderTaskStatus.paused,'pauseDownload');
       }
       await _updateDownloadStatus(url, DownloaderTaskStatus.paused);
-    }
   }
 
   /// Resumes a paused download for the specified [url].
@@ -554,6 +612,7 @@ class Mp4FileDownloader {
     await _continueDownload(url);
   }
 
+
   /// Cancels an ongoing or paused download for the specified [url].
   ///
   /// This method checks if there is an active or paused download associated with the
@@ -568,8 +627,7 @@ class Mp4FileDownloader {
   /// Throws: May throw exceptions if there are issues during the database operations.
   Future<void> cancelDownload(String url) async {
     if(_cancelTokens.containsKey(url)){
-      _safeCancelTokenByUrl(url, 'cancel download');
-      _cancelTokens.removeWhere((key, value) => key == url);
+      _safeCancelToken(url, 'cancel download');
       await _db.delete('Downloads', where: 'url = ?', whereArgs: [url]);
     }
   }
@@ -609,28 +667,39 @@ class Mp4FileDownloader {
   }
 
 
-  /// Safely cancels the cancel token associated with the given URL.
+  /// Deletes the download task associated with the provided URL from the local database.
   ///
-  /// This method checks if there is a cancel token associated with the provided [url].
-  /// If found, it attempts to cancel the cancel token with the optional [reason].
+  /// Parameters:
+  ///   - [url] : The URL associated with the download task to delete from the database.
+  ///
+  /// Returns:
+  ///   A future that completes when the download task is successfully deleted from the database.
+  Future<void> _deleteDownloadTaskFromDB(String url) async {
+    await _db.delete('Downloads', where: 'url = ?', whereArgs: [url]);
+  }
+
+
+  /// Safely cancels the cancel token.
+  ///
   /// If any error occurs during cancellation, it logs the error message.
   ///
   /// Parameters:
-  ///   - [url]: The URL associated with the cancel token to be canceled.
-  ///   - [reason]: An optional reason for canceling the token.
+  ///   - [cancelToken] : The cancel token to be canceled.
+  ///   - [reason] : An optional reason for canceling the token.
   ///
   /// Note: This method ensures safe cancellation by handling potential errors.
-  void _safeCancelTokenByUrl(String url, [String reason = '']) {
+  void _safeCancelToken(String url, [String reason = '']) {
     // Check if the cancel token exists for the given URL
-    if (_cancelTokens.containsKey(url)) {
       try {
         // Attempt to cancel the cancel token with the provided reason
-        _cancelTokens[url]?.cancel(reason);
+        if(_cancelTokens.containsKey(url)){
+          _cancelTokens[url]!.cancel(CancelRaison(message: reason));
+          _cancelTokens.remove(url);
+        }
       } catch (e) {
         // Log any error that occurs during cancellation
         log(e.toString());
       }
-    }
   }
 
 }

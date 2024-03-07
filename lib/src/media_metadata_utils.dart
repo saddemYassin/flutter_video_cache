@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:flutter_video_info/flutter_video_info.dart';
-
 import 'models/media_metadata.dart';
 
 

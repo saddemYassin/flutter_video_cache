@@ -19,6 +19,7 @@ dependencies:
 
   flutter_vlc_player: ^7.4.1
   visibility_detector: ^0.4.0+2
+  app_minimizer: ^1.0.0+2
   flutter_video_cache:
     # When depending on this package from a real application you should use:
     #   flutter_video_cache: ^x.y.z
