@@ -37,6 +37,10 @@ class AppVideoController extends PlayableInterface {
   PlayingState _currentPlayingState = PlayingState.initializing;
 
 
+  /// A function that listens to video player events.
+  ///
+  /// This function is called whenever there is a change in the video player's state
+  /// or when certain events occur during video playback.
   int _oldPosition = 0;
 
 
@@ -59,6 +63,7 @@ class AppVideoController extends PlayableInterface {
     File file = File(filePath);
 
     // Initialize the video player controller with the file
+    /// TODO replace with pooling controller
     controller = VlcPlayerController.file(
         file,
         hwAcc: HwAcc.full,
@@ -83,12 +88,16 @@ class AppVideoController extends PlayableInterface {
       _currentPlayingState = controller!.value.playingState;
 
       // Set media from file and reset position to start
+      /// Fixme : a quick fix for replay video when it ends.
       controller!.setMediaFromFile(File(dataFilePath!), autoPlay: false, hwAcc: HwAcc.auto)
           .then((value) {
-        _oldPosition = 0;
         // If the player was playing, start playing from the beginning
         if(_isPlaying){
-          controller!.setTime(0).then((value) => play());
+          controller!.setTime(0).then((_) {
+            if(_isPlaying){
+              controller!.play();
+            }
+          });
         }
       });
     }
