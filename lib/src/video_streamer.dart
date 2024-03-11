@@ -111,6 +111,10 @@ class VideoStream<T extends PlayableInterface> {
   bool get isInitialized => playable.isInitialized && _mediaInitialized && _canStartPlaying;
 
 
+  /// True if the data source is initialized
+  bool get dataSourceInitialized => _dataSourceInitialized;
+
+
   /// Sets the data source for media playback asynchronously.
   ///
   /// This method ensures that the media is pre-cached before setting the data source,
