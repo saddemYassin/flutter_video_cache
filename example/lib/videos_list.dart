@@ -1,4 +1,3 @@
-import 'package:app_minimizer/app_minimizer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_video_cache/flutter_video_cache.dart';
 import 'package:flutter_video_cache_example/app_video_controller.dart';

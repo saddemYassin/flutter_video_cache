@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:developer';
 import 'package:flutter_video_cache/src/consts.dart';
 import 'package:flutter_video_cache/src/downloader_manager.dart';
 import 'package:flutter_video_cache/src/media_metadata_utils.dart';
@@ -458,6 +459,7 @@ class VideoStream<T extends PlayableInterface> {
       playingCheckTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
         playingCheckTimer = timer;
         int currentPlayablePosition = await playable.getCurrentPosition();
+        log("### _loadedMediaDurationInSeconds $_loadedMediaDurationInSeconds vs currentPlayablePosition $currentPlayablePosition, for ${url}");
         if(mediaDurationInSeconds > _loadedMediaDurationInSeconds && mediaDurationInSeconds > currentPlayablePosition + kMediaThreshHoldInSeconds && _loadedMediaDurationInSeconds < currentPlayablePosition + kMediaThreshHoldInSeconds && playable.isPlaying) {
           playable.pause();
           _waitingForData = true;

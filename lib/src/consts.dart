@@ -2,7 +2,7 @@
 /// The threshold time in seconds that should be cached before playback.
 /// If the player's loaded time exceeds the current playback position plus this threshold,
 /// playback continues; otherwise, playback stops.
-const kMediaThreshHoldInSeconds = 3;
+const kMediaThreshHoldInSeconds = 8;
 
 /// The threshold time in seconds to add to the playing position when restarting playback.
 /// This additional time ensures a smoother user experience when resuming playback.
